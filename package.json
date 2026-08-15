@@ -3,7 +3,40 @@
   "version": "0.1.0",
   "type": "module",
   "description": "Manage COROS coach training schedules from the command line",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zczhuohuo/opencli-plugin-coros-coach.git"
+  },
+  "keywords": [
+    "coros",
+    "opencli",
+    "running",
+    "training"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "files": [
+    "*.ts",
+    "opencli-plugin.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "esbuild add-run.ts schedule.ts coros-client.ts coros-coach.ts coros-program.ts --outdir=. --format=esm --platform=node",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test test/*.test.ts",
+    "check": "npm run typecheck && npm test && npm run build",
+    "prepublishOnly": "npm run check"
+  },
   "peerDependencies": {
     "@jackwener/opencli": ">=1.8.6"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "esbuild": "^0.25.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
   }
 }
