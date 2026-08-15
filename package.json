@@ -1,0 +1,9 @@
+{
+  "name": "opencli-plugin-coros-coach",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Manage COROS coach training schedules from the command line",
+  "peerDependencies": {
+    "@jackwener/opencli": ">=1.8.6"
+  }
+}
