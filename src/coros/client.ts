@@ -39,7 +39,7 @@ function apiError(response: CorosEnvelope, endpoint: string): CliError {
 }
 
 /**
- * Opens the authenticated COROS session and returns its request adapter.
+ * Open the authenticated COROS session and return its request adapter.
  * Tokens remain inside the browser-backed implementation and are never
  * exposed through the adapter's interface.
  */

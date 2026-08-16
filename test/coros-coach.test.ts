@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import type { IPage } from '@jackwener/opencli/registry';
 
-import { createCorosCoach } from '../coros-coach.js';
+import { createCorosCoach } from '../src/coros/coach.js';
 
 type PageAdapter = Pick<IPage, 'fetchJson' | 'goto' | 'wait'>;
 type Route = unknown | ((options: Record<string, unknown>) => unknown);

@@ -89,13 +89,23 @@ npm run check
 opencli validate coros-coach
 ```
 
-OpenCLI discovers plugin commands from root-level TypeScript files. The root
-`add-run.ts` and `schedule.ts` files are deliberately thin registrations. The
-`createCorosCoach` interface in `coros-coach.ts` owns validation, orchestration,
-and output shaping; COROS session and payload details remain behind that seam.
-`npm run build` refreshes the ignored root-level JavaScript artifacts that
-OpenCLI executes, so rerun it after changing TypeScript in a locally installed
-plugin.
+The source tree separates platform entry points from the COROS implementation:
+
+```text
+.
+├── src/
+│   ├── commands/       # OpenCLI command registrations
+│   └── coros/          # Coach interface, browser adapter, and payload builder
+├── test/               # Tests through the coach interface
+├── add-run.ts          # Root loader required by OpenCLI
+└── schedule.ts         # Root loader required by OpenCLI
+```
+
+The `createCorosCoach` interface in `src/coros/coach.ts` owns validation,
+orchestration, and output shaping. COROS session and payload details remain
+behind that seam. `npm install` and `npm run build` bundle each command into an
+ignored root-level JavaScript runtime file because OpenCLI discovers plugins
+from the repository root.
 
 ## License
 

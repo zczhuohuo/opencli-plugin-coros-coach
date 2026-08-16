@@ -1,13 +1,13 @@
 import { CliError } from '@jackwener/opencli/errors';
 import type { IPage } from '@jackwener/opencli/registry';
 
-import { connectCoros } from './coros-client.js';
+import { connectCoros } from './client.js';
 import {
   buildRunProgram,
   buildScheduleUpdate,
   type RunCalculation,
   type ScheduleUpdate,
-} from './coros-program.js';
+} from './program.js';
 
 interface ScheduleItem {
   idInPlan?: unknown;

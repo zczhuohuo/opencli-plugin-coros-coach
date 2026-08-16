@@ -6,6 +6,3 @@ node_modules/
 # OpenCLI transpiles root TypeScript files beside their sources on install.
 /add-run.js
 /schedule.js
-/coros-client.js
-/coros-coach.js
-/coros-program.js

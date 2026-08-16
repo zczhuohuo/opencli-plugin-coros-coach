@@ -1,3 +1,4 @@
+/** Values returned by COROS after calculating a run program. */
 export interface RunCalculation {
   planDistance: unknown;
   distanceDisplayUnit?: unknown;
