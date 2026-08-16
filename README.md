@@ -32,7 +32,9 @@ npm install
 | Command | Access | Description |
 | --- | --- | --- |
 | `coros-coach/schedule` | Read | List planned sessions for a date range, optionally including completed sessions. |
+| `coros-coach/strength-exercises` | Read | List the current account's COROS strength action catalog. |
 | `coros-coach/add-run` | Write | Calculate and create a time-based running session. |
+| `coros-coach/add-strength` | Write | Calculate and create a strength session from COROS actions. |
 
 ### List the schedule
 
@@ -79,6 +81,50 @@ calculates the estimated distance and training load, then the plugin updates the
 schedule. The command currently creates one time-targeted run; reusable courses
 and multi-step workouts are outside its scope.
 
+### List supported strength actions
+
+COROS serves the strength catalog for each signed-in account. Query it before
+building a session instead of relying on hard-coded IDs:
+
+```bash
+opencli coros-coach strength-exercises -f json
+```
+
+The Training Hub currently groups actions by body part, equipment, muscle, and
+custom actions. Its body-part filters are full body, shoulders and neck, arms,
+chest, back, waist and abdomen, and glutes and legs. Examples observed in the
+catalog include `热身`, `深蹲`, `臀桥`, `俯卧撑`, `俯身哑铃划船`, `平板支撑`,
+`死虫式`, and `放松`. The command remains the source of truth when COROS adds,
+removes, localizes, or customizes actions.
+
+### Add a strength session
+
+Preview the example 35-minute full-body plan without saving it:
+
+```bash
+opencli coros-coach add-strength \
+  --date 20260816 \
+  --name "全身力量" \
+  --exercises "热身,深蹲,臀桥,俯卧撑,俯身哑铃划船,平板支撑,死虫式,放松" \
+  --sets 3 \
+  --reps 10 \
+  --weight-kg 0 \
+  --rest 00:01:00 \
+  --target-duration 00:35:00 \
+  --description "包含热身、深蹲、臀桥、推、拉、核心与放松安排；按实际器械记录负重。" \
+  --dry-run
+```
+
+Action names must exactly match `strength-exercises`. The defaults are 3 sets,
+10 repetitions, 0 kg, and 60 seconds of rest for every action. Remove `--dry-run`
+only after reviewing the payload and COROS estimate.
+
+`target-duration` records the planning goal in command output. COROS does not
+provide a force-total-duration field for strength courses; it calculates the
+actual estimate from actions, sets, repetitions, and rest. Compare
+`target_duration` with `estimated_duration` in the preview and adjust the plan
+when they differ.
+
 ## Development
 
 ```bash
@@ -97,8 +143,10 @@ The source tree separates platform entry points from the COROS implementation:
 │   ├── commands/       # OpenCLI command registrations
 │   └── coros/          # Coach interface, browser adapter, and payload builder
 ├── test/               # Tests through the coach interface
+├── add-strength.ts     # Root loader required by OpenCLI
 ├── add-run.ts          # Root loader required by OpenCLI
-└── schedule.ts         # Root loader required by OpenCLI
+├── schedule.ts         # Root loader required by OpenCLI
+└── strength-exercises.ts
 ```
 
 The `createCorosCoach` interface in `src/coros/coach.ts` owns validation,

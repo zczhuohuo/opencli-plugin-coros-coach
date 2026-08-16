@@ -5,10 +5,26 @@ export interface RunCalculation {
   planDuration?: unknown;
   exerciseBarChart?: unknown;
   planPitch?: unknown;
+  planSets?: unknown;
   planTrainingLoad?: unknown;
 }
 
 export interface RunProgram extends Record<string, unknown> {
+  idInPlan: number;
+  exercises: Array<Record<string, unknown>>;
+  name: string;
+}
+
+export interface StrengthExerciseInput {
+  definition: Record<string, unknown>;
+  name: string;
+  sets: number;
+  reps: number;
+  weightKg: number;
+  restSeconds: number;
+}
+
+export interface StrengthProgram extends Record<string, unknown> {
   idInPlan: number;
   exercises: Array<Record<string, unknown>>;
   name: string;
@@ -115,13 +131,85 @@ export function buildRunProgram({
   };
 }
 
+function buildStrengthExercise(
+  exercise: StrengthExerciseInput,
+  index: number,
+): Record<string, unknown> {
+  const originId = exercise.definition.originId ?? exercise.definition.id;
+
+  return {
+    ...exercise.definition,
+    groupId: '',
+    id: index + 1,
+    intensityCustom: 0,
+    intensityDisplayUnit: 0,
+    intensityMultiplier: 0,
+    intensityPercent: 0,
+    intensityPercentExtend: 0,
+    intensityType: 1,
+    intensityValue: Math.round(exercise.weightKg * 1_000),
+    intensityValueExtend: 0,
+    isGroup: false,
+    name: exercise.name,
+    originId,
+    restType: 1,
+    restValue: exercise.restSeconds,
+    sets: exercise.sets,
+    sortNo: index + 1,
+    sportType: 4,
+    targetDisplayUnit: 0,
+    targetType: 3,
+    targetValue: exercise.reps,
+  };
+}
+
+export function buildStrengthProgram({
+  idInPlan,
+  name,
+  description,
+  exercises,
+}: {
+  idInPlan: number;
+  name: string;
+  description: string;
+  exercises: StrengthExerciseInput[];
+}): StrengthProgram {
+  return {
+    access: 1,
+    authorId: '0',
+    distance: 0,
+    duration: 0,
+    essence: 0,
+    estimatedType: 0,
+    estimatedValue: 0,
+    exerciseNum: 0,
+    exercises: exercises.map(buildStrengthExercise),
+    idInPlan,
+    name,
+    originEssence: 0,
+    overview: description,
+    pbVersion: 2,
+    referExercise: { hrType: 0, intensityType: 0, valueType: 0 },
+    simple: false,
+    sportType: 4,
+    subType: 65_535,
+    targetType: 0,
+    targetValue: 0,
+    totalSets: 0,
+    trainingLoad: 0,
+    type: 0,
+    unit: 0,
+    version: 0,
+  };
+}
+
 export function buildScheduleUpdate({
   date,
   program,
   calculation,
 }: {
   date: string;
-  program: RunProgram;
+  program: RunProgram | StrengthProgram;
   calculation: RunCalculation;
 }): ScheduleUpdate {
   return {
@@ -142,6 +230,9 @@ export function buildScheduleUpdate({
       duration: calculation.planDuration,
       exerciseBarChart: calculation.exerciseBarChart,
       pitch: calculation.planPitch,
+      ...(calculation.planSets === undefined
+        ? {}
+        : { sets: calculation.planSets, totalSets: calculation.planSets }),
       trainingLoad: calculation.planTrainingLoad,
     }],
     versionObjects: [{ id: program.idInPlan, status: 1 }],

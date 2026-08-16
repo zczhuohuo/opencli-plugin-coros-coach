@@ -5,4 +5,6 @@ node_modules/
 
 # OpenCLI transpiles root TypeScript files beside their sources on install.
 /add-run.js
+/add-strength.js
 /schedule.js
+/strength-exercises.js

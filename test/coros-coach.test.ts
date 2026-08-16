@@ -38,6 +38,9 @@ class FakePage implements PageAdapter {
     }
 
     const data = typeof route === 'function' ? route(options) : route;
+    if (parsed.hostname === 'staticcn.coros.com') {
+      return data;
+    }
     return { result: '0000', data };
   }
 }
@@ -112,6 +115,33 @@ test('listSchedule rejects invalid ranges before opening a browser session', asy
   assert.equal(page.requests.length, 0);
 });
 
+test('listStrengthExercises returns the live account catalog with readable metadata', async () => {
+  const page = new FakePage({
+    '/account/query': { userId: 'user-7', userProfile: { language: 'zh-CN' } },
+    '/locale/coros-traininghub-v2/zh-CN.prod.json?locale=zh-CN': {
+      T1061: '深蹲',
+    },
+    '/training/exercise/query?userId=user-7&sportType=4': [{
+      id: 'strength-1',
+      name: 'T1061',
+      partText: ['Glutes & Legs'],
+      equipmentText: ['Bodyweight'],
+      muscleText: ['Hamstrings', 'Quadriceps'],
+      sortNo: 2,
+    }],
+  });
+
+  const result = await createCorosCoach(page).listStrengthExercises();
+
+  assert.deepEqual(result, [{
+    name: '深蹲',
+    origin_id: 'strength-1',
+    body_parts: 'Glutes & Legs',
+    equipment: 'Bodyweight',
+    muscles: 'Hamstrings, Quadriceps',
+  }]);
+});
+
 test('addRun dry-run calculates a payload without updating the schedule', async () => {
   const query = '/training/schedule/query?startDate=20260817&endDate=20260817&supportRestExercise=1';
   let calculatedProgram: Record<string, unknown> | undefined;
@@ -181,6 +211,93 @@ test('addRun persists the calculated payload when dryRun is false', async () => 
   assert.equal(result.status, 'saved');
   assert.equal(result.payload, undefined);
   assert.equal((updateBody as { programs: Array<{ idInPlan: number }> }).programs[0]?.idInPlan, 5);
+});
+
+test('addStrength resolves live actions and previews a COROS strength payload', async () => {
+  const query = '/training/schedule/query?startDate=20260816&endDate=20260816&supportRestExercise=1';
+  const catalogQuery = '/training/exercise/query?userId=user-8&sportType=4';
+  let calculatedProgram: Record<string, unknown> | undefined;
+  const page = new FakePage({
+    [query]: { maxIdInPlan: 20 },
+    '/account/query': { userId: 'user-8', userProfile: { language: 'zh-CN' } },
+    '/locale/coros-traininghub-v2/zh-CN.prod.json?locale=zh-CN': {
+      T1061: '深蹲',
+      T1033: '臀桥',
+    },
+    [catalogQuery]: [
+      { id: 'squat-id', name: 'T1061', exerciseType: 2, sortNo: 1 },
+      { id: 'bridge-id', name: 'T1033', exerciseType: 2, sortNo: 2 },
+    ],
+    '/training/program/calculate': (options: Record<string, unknown>) => {
+      calculatedProgram = options.body as Record<string, unknown>;
+      return {
+        planDuration: 2_040,
+        planSets: 6,
+        planTrainingLoad: 28,
+      };
+    },
+  });
+
+  const result = await createCorosCoach(page).addStrength({
+    date: '20260816',
+    name: ' Full body strength ',
+    exercises: '深蹲, 臀桥',
+    sets: 3,
+    reps: 10,
+    weightKg: 0,
+    rest: '00:01:00',
+    targetDuration: '00:35:00',
+    description: 'Warm up, push, pull, core, and cool down.',
+    dryRun: true,
+  });
+
+  assert.equal(result.status, 'calculated, not saved');
+  assert.equal(result.estimated_duration, '00:34:00');
+  assert.equal(result.target_duration, '00:35:00');
+  assert.equal(calculatedProgram?.sportType, 4);
+  assert.equal(calculatedProgram?.idInPlan, 21);
+  assert.equal(calculatedProgram?.overview, 'Warm up, push, pull, core, and cool down.');
+  const exercises = calculatedProgram?.exercises as Array<Record<string, unknown>>;
+  assert.deepEqual(exercises.map(({ originId }) => originId), ['squat-id', 'bridge-id']);
+  assert.deepEqual(exercises.map(({ name }) => name), ['T1061', 'T1033']);
+  assert.deepEqual(exercises.map(({ sets }) => sets), [3, 3]);
+  assert.deepEqual(exercises.map(({ targetValue }) => targetValue), [10, 10]);
+  assert.deepEqual(exercises.map(({ intensityValue }) => intensityValue), [0, 0]);
+  assert.deepEqual(exercises.map(({ restValue }) => restValue), [60, 60]);
+  assert.equal(result.payload?.programs[0]?.totalSets, 6);
+  assert.equal(
+    page.requests.some(({ path }) => path === '/training/schedule/update'),
+    false,
+  );
+});
+
+test('addStrength rejects names missing from the current COROS catalog', async () => {
+  const query = '/training/schedule/query?startDate=20260816&endDate=20260816&supportRestExercise=1';
+  const page = new FakePage({
+    [query]: {},
+    '/account/query': { userId: 'user-9' },
+    '/training/exercise/query?userId=user-9&sportType=4': [
+      { id: 'squat-id', nameText: 'Deep Squat' },
+    ],
+  });
+
+  await assert.rejects(
+    createCorosCoach(page).addStrength({
+      date: '20260816',
+      name: 'Strength',
+      exercises: 'Unknown Action',
+      sets: 3,
+      reps: 10,
+      weightKg: 0,
+      rest: '00:01:00',
+      dryRun: true,
+    }),
+    /Run strength-exercises/,
+  );
+  assert.equal(
+    page.requests.some(({ path }) => path === '/training/program/calculate'),
+    false,
+  );
 });
 
 test('remote authentication errors are mapped at the coach interface', async () => {

@@ -1,6 +1,6 @@
 {
   "name": "opencli-plugin-coros-coach",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "Manage COROS coach training schedules from the command line",
   "license": "MIT",
@@ -12,6 +12,7 @@
     "coros",
     "opencli",
     "running",
+    "strength",
     "training"
   ],
   "engines": {
@@ -25,7 +26,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "esbuild add-run.ts schedule.ts --bundle --packages=external --outdir=. --format=esm --platform=node --target=node20",
+    "build": "esbuild add-run.ts add-strength.ts schedule.ts strength-exercises.ts --bundle --packages=external --outdir=. --format=esm --platform=node --target=node20",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test test/*.test.ts",
     "check": "npm run typecheck && npm test && npm run build",
