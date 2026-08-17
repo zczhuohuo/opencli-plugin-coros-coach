@@ -82,7 +82,8 @@ export interface StrengthExerciseRow {
 export interface AddStrengthInput {
   date: string;
   name: string;
-  exercises: string;
+  exercises?: string;
+  exercisePlan?: string;
   sets: number;
   reps: number;
   weightKg: number;
@@ -217,6 +218,81 @@ function parseExerciseNames(value: unknown): string[] {
   return names;
 }
 
+interface StrengthPrescription {
+  name: string;
+  sets: number;
+  target: StrengthExerciseInput['target'];
+  weightKg: number;
+  restSeconds: number;
+  restText: string;
+}
+
+function parseExercisePlan(
+  value: unknown,
+  defaults: { sets: number; reps: number; weightKg: number; restSeconds: number; restText: string },
+): StrengthPrescription[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(String(value ?? ''));
+  } catch {
+    throw invalidArgument('exercise-plan must be a JSON array of exercise objects.');
+  }
+
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    throw invalidArgument('exercise-plan must contain at least one exercise object.');
+  }
+
+  return parsed.map((rawExercise, index) => {
+    if (rawExercise === null || typeof rawExercise !== 'object' || Array.isArray(rawExercise)) {
+      throw invalidArgument(`exercise-plan item ${index + 1} must be an object.`);
+    }
+
+    const exercise = rawExercise as Record<string, unknown>;
+    const allowedKeys = new Set(['name', 'sets', 'reps', 'duration', 'weightKg', 'rest']);
+    const unknownKeys = Object.keys(exercise).filter((key) => !allowedKeys.has(key));
+    if (unknownKeys.length > 0) {
+      throw invalidArgument(
+        `exercise-plan item ${index + 1} has unsupported field(s): ${unknownKeys.join(', ')}.`,
+      );
+    }
+
+    const name = requireName(exercise.name);
+    const sets = exercise.sets === undefined
+      ? defaults.sets
+      : parseWholeNumber(exercise.sets, `exercise-plan item ${index + 1} sets`, 1, 99);
+    const weightKg = exercise.weightKg === undefined
+      ? defaults.weightKg
+      : parseWeight(exercise.weightKg);
+    const rest = exercise.rest === undefined
+      ? { text: defaults.restText, seconds: defaults.restSeconds }
+      : parseClock(exercise.rest, `exercise-plan item ${index + 1} rest`, true);
+
+    if (exercise.reps !== undefined && exercise.duration !== undefined) {
+      throw invalidArgument(
+        `exercise-plan item ${index + 1} must use either reps or duration, not both.`,
+      );
+    }
+
+    const target = exercise.duration === undefined
+      ? {
+          kind: 'reps' as const,
+          value: exercise.reps === undefined
+            ? defaults.reps
+            : parseWholeNumber(exercise.reps, `exercise-plan item ${index + 1} reps`, 1, 999),
+        }
+      : {
+          kind: 'duration' as const,
+          value: parseClock(
+            exercise.duration,
+            `exercise-plan item ${index + 1} duration`,
+            false,
+          ).seconds,
+        };
+
+    return { name, sets, target, weightKg, restSeconds: rest.seconds, restText: rest.text };
+  });
+}
+
 function parseIntensity(lowValue: unknown, highValue: unknown): { low: number; high: number } {
   const low = Number(lowValue);
   const high = Number(highValue);
@@ -315,10 +391,9 @@ function strengthExerciseName(
 }
 
 function resolveStrengthExercises(
-  requestedNames: string[],
+  prescriptions: StrengthPrescription[],
   catalog: StrengthExerciseRecord[],
   translations: CorosTranslations,
-  defaults: Omit<StrengthExerciseInput, 'definition' | 'name'>,
 ): StrengthExerciseInput[] {
   const byName = new Map<string, StrengthExerciseRecord>();
   for (const exercise of catalog) {
@@ -335,7 +410,9 @@ function resolveStrengthExercises(
     }
   }
 
-  const missing = requestedNames.filter((name) => !byName.has(name));
+  const missing = prescriptions
+    .map(({ name }) => name)
+    .filter((name) => !byName.has(name));
   if (missing.length > 0) {
     throw invalidArgument(
       `Unsupported COROS strength action(s): ${missing.join(', ')}. `
@@ -343,11 +420,34 @@ function resolveStrengthExercises(
     );
   }
 
-  return requestedNames.map((name) => ({
-    ...defaults,
-    definition: byName.get(name) as StrengthExerciseRecord,
-    name: textOr((byName.get(name) as StrengthExerciseRecord).name, name),
+  return prescriptions.map((prescription) => ({
+    ...prescription,
+    definition: byName.get(prescription.name) as StrengthExerciseRecord,
+    name: textOr(
+      (byName.get(prescription.name) as StrengthExerciseRecord).name,
+      prescription.name,
+    ),
   }));
+}
+
+function asTranslations(value: unknown): CorosTranslations {
+  let candidate = value;
+  if (typeof candidate === 'string') {
+    try {
+      candidate = JSON.parse(candidate);
+    } catch {
+      return {};
+    }
+  }
+  if (candidate !== null && typeof candidate === 'object' && !Array.isArray(candidate)) {
+    const envelope = candidate as Record<string, unknown>;
+    if (envelope.data !== null && typeof envelope.data === 'object' && !Array.isArray(envelope.data)) {
+      candidate = envelope.data;
+    }
+  }
+  return candidate !== null && typeof candidate === 'object' && !Array.isArray(candidate)
+    ? candidate as CorosTranslations
+    : {};
 }
 
 async function loadCorosTranslations(
@@ -360,9 +460,20 @@ async function loadCorosTranslations(
   const url = `https://staticcn.coros.com/locale/coros-traininghub-v2/${locale}.prod.json?locale=${locale}`;
   try {
     const response = await page.fetchJson(url);
-    return response !== null && typeof response === 'object' && !Array.isArray(response)
-      ? response as CorosTranslations
-      : {};
+    const translations = asTranslations(response);
+    if (Object.keys(translations).length > 0) {
+      return translations;
+    }
+  } catch {
+    // Browser-backed requests can reject COROS's cross-origin static host.
+  }
+
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      return {};
+    }
+    return asTranslations(await response.json());
   } catch {
     return {};
   }
@@ -541,6 +652,7 @@ export function createCorosCoach(
       date: rawDate,
       name: rawName,
       exercises: rawExercises,
+      exercisePlan: rawExercisePlan = '',
       sets: rawSets,
       reps: rawReps,
       weightKg: rawWeightKg,
@@ -551,7 +663,6 @@ export function createCorosCoach(
     }) {
       const date = parseDate(rawDate, 'date');
       const name = requireName(rawName);
-      const exerciseNames = parseExerciseNames(rawExercises);
       const sets = parseWholeNumber(rawSets, 'sets', 1, 99);
       const reps = parseWholeNumber(rawReps, 'reps', 1, 999);
       const weightKg = parseWeight(rawWeightKg);
@@ -559,6 +670,27 @@ export function createCorosCoach(
       const targetDuration = String(rawTargetDuration ?? '').length > 0
         ? parseClock(rawTargetDuration, 'target-duration', false).text
         : '';
+      const hasExerciseNames = String(rawExercises ?? '').trim().length > 0;
+      const hasExercisePlan = String(rawExercisePlan ?? '').trim().length > 0;
+      if (hasExerciseNames === hasExercisePlan) {
+        throw invalidArgument('Provide exactly one of exercises or exercise-plan.');
+      }
+      const prescriptions = hasExercisePlan
+        ? parseExercisePlan(rawExercisePlan, {
+            sets,
+            reps,
+            weightKg,
+            restSeconds: rest.seconds,
+            restText: rest.text,
+          })
+        : parseExerciseNames(rawExercises).map((exerciseName) => ({
+            name: exerciseName,
+            sets,
+            target: { kind: 'reps' as const, value: reps },
+            weightKg,
+            restSeconds: rest.seconds,
+            restText: rest.text,
+          }));
 
       const [schedule, account] = await Promise.all([
         request<ScheduleResponse>(scheduleQuery(date, date)),
@@ -576,10 +708,9 @@ export function createCorosCoach(
         throw new CliError('COROS_API_ERROR', 'COROS returned an invalid strength exercise catalog.');
       }
       const resolvedExercises = resolveStrengthExercises(
-        exerciseNames,
+        prescriptions,
         catalog,
         translations,
-        { sets, reps, weightKg, restSeconds: rest.seconds },
       );
       const program = buildStrengthProgram({
         idInPlan: nextIdInPlan(schedule),
@@ -596,8 +727,14 @@ export function createCorosCoach(
         status: dryRun ? 'calculated, not saved' : 'saved',
         date,
         name,
-        exercises: exerciseNames.join(', '),
-        prescription: `${sets} sets x ${reps} reps @ ${weightKg} kg, ${rest.text} rest`,
+        exercises: prescriptions.map(({ name: exerciseName }) => exerciseName).join(', '),
+        prescription: prescriptions.map((exercise) => {
+          const target = exercise.target.kind === 'duration'
+            ? `${secondsToClock(exercise.target.value)}`
+            : `${exercise.target.value} reps`;
+          return `${exercise.name}: ${exercise.sets} sets x ${target} @ ${exercise.weightKg} kg, `
+            + `${exercise.restText} rest`;
+        }).join('; '),
         target_duration: targetDuration,
         estimated_duration: secondsToClock(calculation.planDuration),
         training_load: stringOrNumber(calculation.planTrainingLoad),

@@ -19,10 +19,14 @@ export interface StrengthExerciseInput {
   definition: Record<string, unknown>;
   name: string;
   sets: number;
-  reps: number;
+  target: StrengthExerciseTarget;
   weightKg: number;
   restSeconds: number;
 }
+
+export type StrengthExerciseTarget =
+  | { kind: 'reps'; value: number }
+  | { kind: 'duration'; value: number };
 
 export interface StrengthProgram extends Record<string, unknown> {
   idInPlan: number;
@@ -158,8 +162,8 @@ function buildStrengthExercise(
     sortNo: index + 1,
     sportType: 4,
     targetDisplayUnit: 0,
-    targetType: 3,
-    targetValue: exercise.reps,
+    targetType: exercise.target.kind === 'duration' ? 2 : 3,
+    targetValue: exercise.target.value,
   };
 }
 

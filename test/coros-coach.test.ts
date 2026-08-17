@@ -142,6 +142,31 @@ test('listStrengthExercises returns the live account catalog with readable metad
   }]);
 });
 
+test('listStrengthExercises falls back to the static COROS locale endpoint', async (context) => {
+  const page = new FakePage({
+    '/account/query': { userId: 'user-locale', userProfile: { language: 'zh-CN' } },
+    '/training/exercise/query?userId=user-locale&sportType=4': [{
+      id: 'strength-1',
+      name: 'T1061',
+    }],
+  });
+  const originalFetchJson = page.fetchJson.bind(page);
+  page.fetchJson = async (url: string, options: Record<string, unknown> = {}) => {
+    if (new URL(url).hostname === 'staticcn.coros.com') {
+      throw new Error('Cross-origin request blocked');
+    }
+    return originalFetchJson(url, options);
+  };
+  context.mock.method(globalThis, 'fetch', async () => new Response(
+    JSON.stringify({ T1061: '深蹲' }),
+    { status: 200, headers: { 'content-type': 'application/json' } },
+  ));
+
+  const result = await createCorosCoach(page).listStrengthExercises();
+
+  assert.equal(result[0]?.name, '深蹲');
+});
+
 test('addRun dry-run calculates a payload without updating the schedule', async () => {
   const query = '/training/schedule/query?startDate=20260817&endDate=20260817&supportRestExercise=1';
   let calculatedProgram: Record<string, unknown> | undefined;
@@ -271,11 +296,93 @@ test('addStrength resolves live actions and previews a COROS strength payload', 
   );
 });
 
+test('addStrength supports per-exercise reps, duration, weight, sets, and rest', async () => {
+  const query = '/training/schedule/query?startDate=20260817&endDate=20260817&supportRestExercise=1';
+  const catalogQuery = '/training/exercise/query?userId=user-10&sportType=4';
+  let calculatedProgram: Record<string, unknown> | undefined;
+  const page = new FakePage({
+    [query]: { maxIdInPlan: 30 },
+    '/account/query': { userId: 'user-10', userProfile: { language: 'zh-CN' } },
+    '/locale/coros-traininghub-v2/zh-CN.prod.json?locale=zh-CN': {
+      data: { T1000: '热身', T1061: '深蹲', T1264: '死虫式' },
+    },
+    [catalogQuery]: [
+      { id: 'warmup-id', name: 'T1000', exerciseType: 2, sortNo: 1 },
+      { id: 'squat-id', name: 'T1061', exerciseType: 2, sortNo: 2 },
+      { id: 'dead-bug-id', name: 'T1264', exerciseType: 2, sortNo: 3 },
+    ],
+    '/training/program/calculate': (options: Record<string, unknown>) => {
+      calculatedProgram = options.body as Record<string, unknown>;
+      return { planDuration: 1_980, planSets: 6, planTrainingLoad: 22 };
+    },
+  });
+
+  const result = await createCorosCoach(page).addStrength({
+    date: '20260817',
+    name: 'Runner strength',
+    exercisePlan: JSON.stringify([
+      { name: '热身', sets: 1, duration: '00:08:00', rest: '00:00:00' },
+      { name: '深蹲', sets: 3, reps: 10, rest: '00:01:15' },
+      { name: '死虫式', sets: 2, reps: 8, weightKg: 2.5, rest: '00:00:45' },
+    ]),
+    sets: 2,
+    reps: 12,
+    weightKg: 0,
+    rest: '00:01:00',
+    dryRun: true,
+  });
+
+  const exercises = calculatedProgram?.exercises as Array<Record<string, unknown>>;
+  assert.deepEqual(exercises.map(({ name }) => name), ['T1000', 'T1061', 'T1264']);
+  assert.deepEqual(exercises.map(({ sets }) => sets), [1, 3, 2]);
+  assert.deepEqual(exercises.map(({ targetType }) => targetType), [2, 3, 3]);
+  assert.deepEqual(exercises.map(({ targetValue }) => targetValue), [480, 10, 8]);
+  assert.deepEqual(exercises.map(({ intensityValue }) => intensityValue), [0, 0, 2_500]);
+  assert.deepEqual(exercises.map(({ restValue }) => restValue), [0, 75, 45]);
+  assert.match(result.prescription, /热身: 1 sets x 00:08:00/);
+  assert.match(result.prescription, /死虫式: 2 sets x 8 reps @ 2.5 kg/);
+});
+
+test('addStrength rejects ambiguous and malformed exercise plans before connecting', async () => {
+  const page = new FakePage({});
+  const coach = createCorosCoach(page);
+  const defaults = {
+    date: '20260817',
+    name: 'Strength',
+    sets: 3,
+    reps: 10,
+    weightKg: 0,
+    rest: '00:01:00',
+    dryRun: true,
+  };
+
+  await assert.rejects(
+    coach.addStrength({ ...defaults, exercises: '深蹲', exercisePlan: '[]' }),
+    /exactly one/,
+  );
+  await assert.rejects(
+    coach.addStrength({
+      ...defaults,
+      exercisePlan: JSON.stringify([{ name: '深蹲', reps: 10, duration: '00:00:30' }]),
+    }),
+    /either reps or duration/,
+  );
+  await assert.rejects(
+    coach.addStrength({
+      ...defaults,
+      exercisePlan: JSON.stringify([{ name: '深蹲', repz: 10 }]),
+    }),
+    /unsupported field/,
+  );
+  assert.equal(page.navigations.length, 0);
+});
+
 test('addStrength rejects names missing from the current COROS catalog', async () => {
   const query = '/training/schedule/query?startDate=20260816&endDate=20260816&supportRestExercise=1';
   const page = new FakePage({
     [query]: {},
     '/account/query': { userId: 'user-9' },
+    '/locale/coros-traininghub-v2/zh-CN.prod.json?locale=zh-CN': { unused: 'unused' },
     '/training/exercise/query?userId=user-9&sportType=4': [
       { id: 'squat-id', nameText: 'Deep Squat' },
     ],

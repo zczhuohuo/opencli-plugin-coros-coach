@@ -90,6 +90,18 @@ building a session instead of relying on hard-coded IDs:
 opencli coros-coach strength-exercises -f json
 ```
 
+The catalog is cached locally for seven days. A cache hit does not navigate to
+COROS or refresh the account token. Refresh it immediately when the account's
+actions or language changes:
+
+```bash
+opencli coros-coach strength-exercises --refresh -f json
+```
+
+COROS commands use one persistent OpenCLI site session. Sign in once in the
+window opened for `coros-coach`; subsequent commands reuse that authenticated
+session instead of creating a new one-shot browser context.
+
 The Training Hub currently groups actions by body part, equipment, muscle, and
 custom actions. Its body-part filters are full body, shoulders and neck, arms,
 chest, back, waist and abdomen, and glutes and legs. Examples observed in the
@@ -98,6 +110,35 @@ catalog include `热身`, `深蹲`, `臀桥`, `俯卧撑`, `俯身哑铃划船`,
 removes, localizes, or customizes actions.
 
 ### Add a strength session
+
+For a detailed course where every action has its own prescription, pass an
+`exercise-plan` JSON array. Each item requires an exact catalog `name` and may
+override `sets`, `reps` or `duration`, `weightKg`, and `rest`:
+
+```bash
+opencli coros-coach add-strength \
+  --date 20260817 \
+  --name "居家跑者力量（徒手）" \
+  --exercise-plan '[
+    {"name":"热身","sets":1,"duration":"00:08:00","rest":"00:00:00"},
+    {"name":"深蹲","sets":3,"reps":10,"rest":"00:01:00"},
+    {"name":"单腿臀桥","sets":3,"reps":10,"rest":"00:01:00"},
+    {"name":"反向弓步","sets":2,"reps":8,"rest":"00:01:00"},
+    {"name":"单腿提踵","sets":3,"reps":15,"rest":"00:01:00"},
+    {"name":"侧卧抬腿","sets":2,"reps":15,"rest":"00:00:45"},
+    {"name":"死虫式","sets":2,"reps":8,"rest":"00:00:45"}
+  ]' \
+  --description "瑜伽垫＋瑜伽砖；单腿动作按每侧次数执行；保留2–3次余力。" \
+  --dry-run
+```
+
+`duration` uses `HH:MM:SS` and creates a time-targeted COROS action card. An
+item cannot contain both `reps` and `duration`. Omitted item fields inherit the
+command defaults (`sets`, `reps`, `weight-kg`, and `rest`). Use exactly one of
+`exercise-plan` and the simpler comma-separated `exercises` option.
+
+The original shorthand remains available when every action shares one
+prescription:
 
 Preview the example 35-minute full-body plan without saving it:
 

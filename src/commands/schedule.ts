@@ -12,6 +12,7 @@ cli({
   strategy: Strategy.COOKIE,
   browser: true,
   navigateBefore: false,
+  siteSession: 'persistent',
   args: [
     { name: 'start-date', required: true, help: 'First date, YYYYMMDD' },
     { name: 'end-date', required: true, help: 'Last date, YYYYMMDD' },
