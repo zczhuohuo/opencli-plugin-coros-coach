@@ -115,20 +115,167 @@ test('listSchedule rejects invalid ranges before opening a browser session', asy
   assert.equal(page.requests.length, 0);
 });
 
+test('getDashboard combines the Training Hub summary and detail APIs', async () => {
+  const dashboard = {
+    summaryInfo: {
+      staminaLevel: 73,
+      aerobicEnduranceScore: 72.8,
+      lactateThresholdCapacityScore: 71.8,
+      anaerobicEnduranceScore: 71.7,
+      anaerobicCapacityScore: 71.6,
+      recoveryPct: 100,
+      recoveryState: 4,
+      fullRecoveryHours: 0,
+      fitnessMaxHr: 189,
+      rhr: 52,
+      lthr: 167,
+      ltsp: 313,
+      lthrZone: [{ index: 0, min: 0, max: 134 }],
+      ltspZone: [{ index: 0, min: 449 }],
+      runScoreList: [{ type: 5, duration: 1_504 }],
+      sleepHrvData: { avgSleepHrv: 48 },
+    },
+  };
+  const detail = {
+    summaryInfo: { ati: 22, cti: 49, trainingLoadRatio: 0.44 },
+    detailList: [{ happenDay: 20260816, performance: 100 }],
+    sportDataList: [{ name: 'Morning run' }],
+    currentWeekRecord: { distance: 5_570 },
+  };
+  const page = new FakePage({
+    '/dashboard/query': dashboard,
+    '/dashboard/detail/query': detail,
+  });
+
+  const result = await createCorosCoach(page).getDashboard(true);
+
+  assert.equal(result.running_level, 73);
+  assert.equal(result.short_term_load, 22);
+  assert.equal(result.long_term_load, 49);
+  assert.equal(result.load_ratio_pct, 44);
+  assert.equal(result.recovery_pct, 100);
+  assert.equal(result.threshold_pace, '05:13/km');
+  assert.equal(result.sleep_hrv_avg_ms, 48);
+  assert.deepEqual(result.raw, { dashboard, detail });
+});
+
+test('listActivities queries and normalizes paginated Training Hub history', async () => {
+  const query = '/activity/query?size=50&pageNumber=2&modeList=100%2C101&startDay=20260801&endDay=20260817&keywords=morning';
+  const page = new FakePage({
+    [query]: {
+      count: 61,
+      pageNumber: 2,
+      totalPage: 2,
+      dataList: [{
+        happenDay: 20260815,
+        name: ' Morning run ',
+        sportType: 100,
+        workoutTime: 2_783,
+        distance: 5_570,
+        avgSpeed: 500,
+        speedType: 3,
+        avgHr: 153,
+        trainingLoad: 124,
+        ascent: 7,
+        calorie: 420_000,
+        labelId: 'run-15',
+        startTime: 1_776_384_000,
+      }],
+    },
+  });
+
+  const result = await createCorosCoach(page).listActivities({
+    startDate: '20260801',
+    endDate: '20260817',
+    sportTypes: '100,101',
+    keywords: ' morning ',
+    page: 2,
+    pageSize: 50,
+    raw: true,
+  });
+
+  assert.equal(result.length, 1);
+  assert.deepEqual(result[0], {
+    date: '2026-08-15',
+    name: 'Morning run',
+    sport_type: 100,
+    sport_name: 'Run',
+    duration_min: 46.4,
+    distance_km: 5.57,
+    avg_pace: '08:20/km',
+    avg_hr: 153,
+    training_load: 124,
+    ascent_m: 7,
+    calories: 420,
+    sets: null,
+    label_id: 'run-15',
+    start_timestamp: 1_776_384_000,
+    page: 2,
+    total_pages: 2,
+    total_count: 61,
+    raw: {
+      happenDay: 20260815,
+      name: ' Morning run ',
+      sportType: 100,
+      workoutTime: 2_783,
+      distance: 5_570,
+      avgSpeed: 500,
+      avgHr: 153,
+      trainingLoad: 124,
+      ascent: 7,
+      calorie: 420_000,
+      speedType: 3,
+      labelId: 'run-15',
+      startTime: 1_776_384_000,
+    },
+  });
+});
+
+test('listActivities validates filters before opening the COROS session', async () => {
+  const page = new FakePage({});
+  const coach = createCorosCoach(page);
+
+  await assert.rejects(
+    coach.listActivities({ startDate: '20260801', page: 1, pageSize: 50 }),
+    /provided together/,
+  );
+  await assert.rejects(
+    coach.listActivities({ sportTypes: 'run', page: 1, pageSize: 50 }),
+    /numeric sport type codes/,
+  );
+  assert.equal(page.navigations.length, 0);
+  assert.equal(page.requests.length, 0);
+});
+
 test('listStrengthExercises returns the live account catalog with readable metadata', async () => {
   const page = new FakePage({
     '/account/query': { userId: 'user-7', userProfile: { language: 'zh-CN' } },
     '/locale/coros-traininghub-v2/zh-CN.prod.json?locale=zh-CN': {
       T1061: '深蹲',
+      T1231: '靠墙静蹲',
     },
-    '/training/exercise/query?userId=user-7&sportType=4': [{
-      id: 'strength-1',
-      name: 'T1061',
-      partText: ['Glutes & Legs'],
-      equipmentText: ['Bodyweight'],
-      muscleText: ['Hamstrings', 'Quadriceps'],
-      sortNo: 2,
-    }],
+    '/training/exercise/query?userId=user-7&sportType=4': [
+      {
+        id: 'strength-1',
+        name: 'T1061',
+        partText: ['Glutes & Legs'],
+        equipmentText: ['Bodyweight'],
+        muscleText: ['Hamstrings', 'Quadriceps'],
+        targetType: 3,
+        targetValue: 10,
+        sortNo: 1,
+      },
+      {
+        id: 'strength-2',
+        name: 'T1231',
+        partText: ['Glutes & Legs'],
+        equipmentText: ['Bodyweight'],
+        muscleText: ['Quadriceps'],
+        targetType: 2,
+        targetValue: 30,
+        sortNo: 2,
+      },
+    ],
   });
 
   const result = await createCorosCoach(page).listStrengthExercises();
@@ -139,6 +286,16 @@ test('listStrengthExercises returns the live account catalog with readable metad
     body_parts: 'Glutes & Legs',
     equipment: 'Bodyweight',
     muscles: 'Hamstrings, Quadriceps',
+    target_unit: 'reps',
+    target: '10 reps',
+  }, {
+    name: '靠墙静蹲',
+    origin_id: 'strength-2',
+    body_parts: 'Glutes & Legs',
+    equipment: 'Bodyweight',
+    muscles: 'Quadriceps',
+    target_unit: 'time',
+    target: '00:00:30',
   }]);
 });
 
@@ -296,6 +453,67 @@ test('addStrength resolves live actions and previews a COROS strength payload', 
   );
 });
 
+test('addStrength uses COROS target units and supports command-line overrides', async () => {
+  const query = '/training/schedule/query?startDate=20260818&endDate=20260818&supportRestExercise=1';
+  const catalogQuery = '/training/exercise/query?userId=user-static&sportType=4';
+  let calculatedProgram: Record<string, unknown> | undefined;
+  const page = new FakePage({
+    [query]: { maxIdInPlan: 40 },
+    '/account/query': { userId: 'user-static', userProfile: { language: 'zh-CN' } },
+    '/locale/coros-traininghub-v2/zh-CN.prod.json?locale=zh-CN': {},
+    [catalogQuery]: [
+      { id: 'squat-id', name: '深蹲', exerciseType: 2, targetType: 3, targetValue: 10 },
+      {
+        id: 'wall-sit-id',
+        originId: '469646870080307200',
+        name: '靠墙静蹲',
+        exerciseType: 2,
+        targetType: 2,
+        targetValue: 30,
+      },
+    ],
+    '/training/program/calculate': (options: Record<string, unknown>) => {
+      calculatedProgram = options.body as Record<string, unknown>;
+      return { planDuration: 900, planSets: 6, planTrainingLoad: 12 };
+    },
+  });
+
+  const result = await createCorosCoach(page).addStrength({
+    date: '20260818',
+    name: '下肢力量',
+    exercises: '深蹲,469646870080307200',
+    sets: 3,
+    reps: 10,
+    holdDuration: '00:00:30-00:00:45',
+    weightKg: 0,
+    rest: '00:01:00',
+    description: '徒手训练。',
+    dryRun: true,
+  });
+
+  const exercises = calculatedProgram?.exercises as Array<Record<string, unknown>>;
+  assert.deepEqual(exercises.map(({ targetType }) => targetType), [3, 2]);
+  assert.deepEqual(exercises.map(({ targetValue }) => targetValue), [10, 45]);
+  assert.match(String(calculatedProgram?.overview), /靠墙静蹲 00:00:30–00:00:45/);
+  assert.match(String(calculatedProgram?.overview), /COROS 计时目标使用范围上限/);
+  assert.match(result.prescription, /靠墙静蹲: 3 sets x 00:00:30–00:00:45/);
+
+  await createCorosCoach(page).addStrength({
+    date: '20260818',
+    name: '覆盖单位',
+    exercises: '深蹲,靠墙静蹲',
+    sets: 3,
+    reps: 10,
+    targetUnits: JSON.stringify({ '469646870080307200': 'reps' }),
+    weightKg: 0,
+    rest: '00:01:00',
+    dryRun: true,
+  });
+  const overriddenExercises = calculatedProgram?.exercises as Array<Record<string, unknown>>;
+  assert.deepEqual(overriddenExercises.map(({ targetType }) => targetType), [3, 3]);
+  assert.deepEqual(overriddenExercises.map(({ targetValue }) => targetValue), [10, 10]);
+});
+
 test('addStrength supports per-exercise reps, duration, weight, sets, and rest', async () => {
   const query = '/training/schedule/query?startDate=20260817&endDate=20260817&supportRestExercise=1';
   const catalogQuery = '/training/exercise/query?userId=user-10&sportType=4';
@@ -373,6 +591,14 @@ test('addStrength rejects ambiguous and malformed exercise plans before connecti
       exercisePlan: JSON.stringify([{ name: '深蹲', repz: 10 }]),
     }),
     /unsupported field/,
+  );
+  await assert.rejects(
+    coach.addStrength({
+      ...defaults,
+      exercises: '深蹲',
+      targetUnits: JSON.stringify({ 深蹲: 'seconds' }),
+    }),
+    /either "reps" or "time"/,
   );
   assert.equal(page.navigations.length, 0);
 });

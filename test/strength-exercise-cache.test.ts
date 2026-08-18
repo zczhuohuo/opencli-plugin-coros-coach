@@ -16,6 +16,8 @@ const EXERCISES: StrengthExerciseRow[] = [{
   body_parts: '臀腿',
   equipment: '徒手',
   muscles: '股四头肌',
+  target_unit: 'reps',
+  target: '10 reps',
 }];
 
 test('strength exercise cache reuses fresh data and refreshes after seven days', async () => {

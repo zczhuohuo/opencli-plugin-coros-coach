@@ -1,3 +1,5 @@
+import { corosTargetValue, type StrengthExerciseTarget } from './strength-target.js';
+
 /** Values returned by COROS after calculating a run program. */
 export interface RunCalculation {
   planDistance: unknown;
@@ -23,10 +25,6 @@ export interface StrengthExerciseInput {
   weightKg: number;
   restSeconds: number;
 }
-
-export type StrengthExerciseTarget =
-  | { kind: 'reps'; value: number }
-  | { kind: 'duration'; value: number };
 
 export interface StrengthProgram extends Record<string, unknown> {
   idInPlan: number;
@@ -163,7 +161,7 @@ function buildStrengthExercise(
     sportType: 4,
     targetDisplayUnit: 0,
     targetType: exercise.target.kind === 'duration' ? 2 : 3,
-    targetValue: exercise.target.value,
+    targetValue: corosTargetValue(exercise.target),
   };
 }
 

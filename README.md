@@ -1,8 +1,9 @@
 # opencli-plugin-coros-coach
 
-Manage a signed-in [COROS Training Hub](https://t.coros.com/admin/views/schedule)
-calendar from the command line. The plugin refreshes the access token inside the
-browser session; it does not print or persist the token.
+Read training context and manage a signed-in [COROS Training Hub](https://t.coros.com/admin/views/dash-board)
+calendar from the command line. The plugin calls the Training Hub APIs instead
+of scraping visible page text. It refreshes the access token inside the browser
+session and never prints or persists the token.
 
 ## Requirements
 
@@ -31,10 +32,53 @@ npm install
 
 | Command | Access | Description |
 | --- | --- | --- |
+| `coros-coach/dashboard` | Read | Read fitness, load, recovery, zones, predictions, HRV, and recent-performance context. |
+| `coros-coach/activities` | Read | Query paginated historical activities with optional date and sport filters. |
 | `coros-coach/schedule` | Read | List planned sessions for a date range, optionally including completed sessions. |
 | `coros-coach/strength-exercises` | Read | List the current account's COROS strength action catalog. |
 | `coros-coach/add-run` | Write | Calculate and create a time-based running session. |
 | `coros-coach/add-strength` | Write | Calculate and create a strength session from COROS actions. |
+
+### Read training context
+
+The dashboard command combines the two APIs behind the Training Hub dashboard
+into one stable record for downstream planning:
+
+```bash
+opencli coros-coach dashboard -f json
+```
+
+It includes running level and sub-scores, short- and long-term load, load ratio,
+recovery, threshold heart rate and pace, heart-rate and pace zones, race
+predictions, HRV, seven-day performance, recent activities, and the current
+week's totals. To inspect all fields returned by COROS while developing a new
+planning rule, add `--raw` and use JSON output:
+
+```bash
+opencli coros-coach dashboard --raw -f json
+```
+
+### Query activity history
+
+Without filters, the command returns the newest 50 activities. A date range,
+sport codes, activity-name keyword, and explicit pagination are optional:
+
+```bash
+opencli coros-coach activities -f json
+
+opencli coros-coach activities \
+  --start-date 20260701 \
+  --end-date 20260817 \
+  --sport-types 100,101,102,103 \
+  --page 1 \
+  --page-size 100 \
+  -f json
+```
+
+Common run codes are `100` outdoor, `101` indoor, `102` trail, and `103`
+track. Every row exposes its COROS `label_id`, normalized duration, distance,
+pace, heart rate, training load, ascent, calories, and pagination metadata.
+Use `--raw` to retain the complete source record alongside those stable fields.
 
 ### List the schedule
 
@@ -107,13 +151,20 @@ custom actions. Its body-part filters are full body, shoulders and neck, arms,
 chest, back, waist and abdomen, and glutes and legs. Examples observed in the
 catalog include `热身`, `深蹲`, `臀桥`, `俯卧撑`, `俯身哑铃划船`, `平板支撑`,
 `死虫式`, and `放松`. The command remains the source of truth when COROS adds,
-removes, localizes, or customizes actions.
+removes, localizes, or customizes actions. The `target_unit` and `target`
+columns come directly from each COROS catalog record (`targetType` and
+`targetValue`). For example, the current `靠墙静蹲` and `平板支撑` records are
+time-based, while `深蹲` is repetition-based.
+
+If COROS returns duplicate localized names, use the row's `origin_id` in
+`exercises` or `exercise-plan` to select the exact catalog record.
 
 ### Add a strength session
 
 For a detailed course where every action has its own prescription, pass an
-`exercise-plan` JSON array. Each item requires an exact catalog `name` and may
-override `sets`, `reps` or `duration`, `weightKg`, and `rest`:
+`exercise-plan` JSON array. Each item requires an exact catalog `name` or
+`origin_id` and may override `sets`, `reps` or `duration`, `weightKg`, and
+`rest`. A duration may be an exact target or a recommended range:
 
 ```bash
 opencli coros-coach add-strength \
@@ -125,6 +176,7 @@ opencli coros-coach add-strength \
     {"name":"单腿臀桥","sets":3,"reps":10,"rest":"00:01:00"},
     {"name":"反向弓步","sets":2,"reps":8,"rest":"00:01:00"},
     {"name":"单腿提踵","sets":3,"reps":15,"rest":"00:01:00"},
+    {"name":"靠墙静蹲","sets":3,"duration":"00:00:30-00:00:45","rest":"00:01:00"},
     {"name":"侧卧抬腿","sets":2,"reps":15,"rest":"00:00:45"},
     {"name":"死虫式","sets":2,"reps":8,"rest":"00:00:45"}
   ]' \
@@ -132,10 +184,26 @@ opencli coros-coach add-strength \
   --dry-run
 ```
 
-`duration` uses `HH:MM:SS` and creates a time-targeted COROS action card. An
-item cannot contain both `reps` and `duration`. Omitted item fields inherit the
-command defaults (`sets`, `reps`, `weight-kg`, and `rest`). Use exactly one of
-`exercise-plan` and the simpler comma-separated `exercises` option.
+`duration` uses `HH:MM:SS` or `HH:MM:SS-HH:MM:SS` and creates a time-targeted
+COROS action card. COROS stores one time target, so a range such as 30–45 seconds
+uses 45 seconds for the watch timer and keeps the complete range in the course
+note and preview. An item cannot contain both `reps` and `duration`.
+
+When neither field is present, the plugin uses the action's live COROS
+`target_unit`. Time-based actions use `--hold-duration 00:00:30-00:00:45`;
+repetition-based or unknown actions use `--reps`. The other omitted fields
+inherit `sets`, `weight-kg`, and `rest`. Use exactly one of `exercise-plan` and
+the simpler comma-separated `exercises` option.
+
+To override an incorrect or account-specific COROS unit for selected actions,
+pass an exact action name or `origin_id`:
+
+```bash
+--target-units '{"靠墙静蹲":"time","平板支撑转体":"reps"}'
+```
+
+Explicit per-action `reps` or `duration` in `exercise-plan` has higher priority
+than this command-line override.
 
 The original shorthand remains available when every action shares one
 prescription:
@@ -149,6 +217,7 @@ opencli coros-coach add-strength \
   --exercises "热身,深蹲,臀桥,俯卧撑,俯身哑铃划船,平板支撑,死虫式,放松" \
   --sets 3 \
   --reps 10 \
+  --hold-duration 00:00:30-00:00:45 \
   --weight-kg 0 \
   --rest 00:01:00 \
   --target-duration 00:35:00 \
@@ -157,8 +226,10 @@ opencli coros-coach add-strength \
 ```
 
 Action names must exactly match `strength-exercises`. The defaults are 3 sets,
-10 repetitions, 0 kg, and 60 seconds of rest for every action. Remove `--dry-run`
-only after reviewing the payload and COROS estimate.
+10 repetitions for repetition-based actions, a 30–45 second range for
+time-based actions, 0 kg, and 60 seconds of rest. Explicit `reps` or `duration`
+always overrides the catalog unit. Remove `--dry-run` only after reviewing the
+payload and COROS estimate.
 
 `target-duration` records the planning goal in command output. COROS does not
 provide a force-total-duration field for strength courses; it calculates the
@@ -186,6 +257,8 @@ The source tree separates platform entry points from the COROS implementation:
 ├── test/               # Tests through the coach interface
 ├── add-strength.ts     # Root loader required by OpenCLI
 ├── add-run.ts          # Root loader required by OpenCLI
+├── activities.ts       # Historical activity loader
+├── dashboard.ts        # Training-context loader
 ├── schedule.ts         # Root loader required by OpenCLI
 └── strength-exercises.ts
 ```
