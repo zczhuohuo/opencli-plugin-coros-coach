@@ -247,7 +247,8 @@ npm run check
 opencli validate coros-coach
 ```
 
-The source tree separates platform entry points from the COROS implementation:
+The source tree exposes one platform entry point and keeps command definitions
+and COROS implementation details under `src/`:
 
 ```text
 .
@@ -255,19 +256,14 @@ The source tree separates platform entry points from the COROS implementation:
 │   ├── commands/       # OpenCLI command registrations
 │   └── coros/          # Coach interface, browser adapter, and payload builder
 ├── test/               # Tests through the coach interface
-├── add-strength.ts     # Root loader required by OpenCLI
-├── add-run.ts          # Root loader required by OpenCLI
-├── activities.ts       # Historical activity loader
-├── dashboard.ts        # Training-context loader
-├── schedule.ts         # Root loader required by OpenCLI
-└── strength-exercises.ts
+└── coros-coach.ts      # Single root entry point required by OpenCLI
 ```
 
 The `createCorosCoach` interface in `src/coros/coach.ts` owns validation,
 orchestration, and output shaping. COROS session and payload details remain
-behind that seam. `npm install` and `npm run build` bundle each command into an
-ignored root-level JavaScript runtime file because OpenCLI discovers plugins
-from the repository root.
+behind that seam. `npm install` and `npm run build` bundle the entry point and
+all command modules into one ignored root-level `coros-coach.js` runtime file
+because OpenCLI discovers plugins from the repository root.
 
 ## License
 
