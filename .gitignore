@@ -3,8 +3,5 @@ node_modules/
 .opencli/
 *.log
 
-# OpenCLI transpiles root TypeScript files beside their sources on install.
-/add-run.js
-/add-strength.js
-/schedule.js
-/strength-exercises.js
+# OpenCLI transpiles the root TypeScript entry point beside its source on install.
+/coros-coach.js

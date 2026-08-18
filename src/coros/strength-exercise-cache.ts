@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 
 import type { StrengthExerciseRow } from './coach.js';
 
-const CACHE_VERSION = 1;
+const CACHE_VERSION = 3;
 export const STRENGTH_EXERCISE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
 
 interface CacheDocument {
@@ -33,7 +33,15 @@ function isStrengthExerciseRow(value: unknown): value is StrengthExerciseRow {
     return false;
   }
   const row = value as Record<string, unknown>;
-  return ['name', 'origin_id', 'body_parts', 'equipment', 'muscles']
+  return [
+    'name',
+    'origin_id',
+    'body_parts',
+    'equipment',
+    'muscles',
+    'target_unit',
+    'target',
+  ]
     .every((field) => typeof row[field] === 'string');
 }
 

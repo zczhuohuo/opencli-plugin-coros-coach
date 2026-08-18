@@ -22,7 +22,15 @@ cli({
     default: false,
     help: 'Ignore the seven-day local cache and refresh the COROS action catalog',
   }],
-  columns: ['name', 'origin_id', 'body_parts', 'equipment', 'muscles'],
+  columns: [
+    'name',
+    'origin_id',
+    'body_parts',
+    'equipment',
+    'muscles',
+    'target_unit',
+    'target',
+  ],
   func: async (page, kwargs) => exerciseCache.get(
     kwargs.refresh === true,
     () => createCorosCoach(page).listStrengthExercises(),

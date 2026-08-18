@@ -1,6 +1,6 @@
 {
   "name": "coros-coach",
-  "version": "0.2.0",
-  "description": "Manage COROS coach training schedules from the command line",
+  "version": "0.3.1",
+  "description": "Read COROS Training Hub data and manage training schedules from the command line",
   "opencli": ">=1.8.6"
 }

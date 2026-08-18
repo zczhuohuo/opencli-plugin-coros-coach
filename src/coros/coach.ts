@@ -10,6 +10,25 @@ import {
   type ScheduleUpdate,
   type StrengthExerciseInput,
 } from './program.js';
+import {
+  DEFAULT_HOLD_DURATION,
+  corosStrengthTarget,
+  corosStrengthTargetUnit,
+  formatStrengthTarget,
+  parseStrengthDuration,
+  resolveStrengthTarget,
+  type StrengthExerciseTarget,
+  type StrengthTargetUnit,
+} from './strength-target.js';
+import {
+  activityHistoryQuery,
+  normalizeActivityHistory,
+  normalizeDashboard,
+  type ActivityHistoryResponse,
+  type ActivityHistoryRow,
+  type DashboardEnvelope,
+  type DashboardSnapshot,
+} from './training-data.js';
 
 interface ScheduleItem {
   idInPlan?: unknown;
@@ -53,6 +72,8 @@ interface StrengthExerciseRecord extends Record<string, unknown> {
   part?: unknown;
   partText?: unknown;
   sortNo?: unknown;
+  targetType?: unknown;
+  targetValue?: unknown;
 }
 
 export interface ScheduleQuery {
@@ -77,6 +98,8 @@ export interface StrengthExerciseRow {
   body_parts: string;
   equipment: string;
   muscles: string;
+  target_unit: StrengthTargetUnit;
+  target: string;
 }
 
 export interface AddStrengthInput {
@@ -86,11 +109,23 @@ export interface AddStrengthInput {
   exercisePlan?: string;
   sets: number;
   reps: number;
+  holdDuration?: string;
+  targetUnits?: string;
   weightKg: number;
   rest: string;
   targetDuration?: string;
   description?: string;
   dryRun?: boolean;
+}
+
+export interface ActivityHistoryInput {
+  startDate?: string;
+  endDate?: string;
+  sportTypes?: string;
+  page: number;
+  pageSize: number;
+  keywords?: string;
+  raw?: boolean;
 }
 
 export interface AddStrengthResult {
@@ -127,6 +162,8 @@ export interface AddRunResult {
 }
 
 export interface CorosCoach {
+  getDashboard(raw?: boolean): Promise<DashboardSnapshot>;
+  listActivities(query: ActivityHistoryInput): Promise<ActivityHistoryRow[]>;
   listSchedule(query: ScheduleQuery): Promise<ScheduleRow[]>;
   listStrengthExercises(): Promise<StrengthExerciseRow[]>;
   addRun(input: AddRunInput): Promise<AddRunResult>;
@@ -218,18 +255,60 @@ function parseExerciseNames(value: unknown): string[] {
   return names;
 }
 
+function parseSportTypes(value: unknown): number[] {
+  const text = String(value ?? '').trim();
+  if (text.length === 0) {
+    return [];
+  }
+  const sportTypes = text.split(',').map((item) => Number(item.trim()));
+  if (sportTypes.some((item) => !Number.isInteger(item) || item < 0 || item > 65_535)) {
+    throw invalidArgument('sport-types must be comma-separated COROS numeric sport type codes.');
+  }
+  return [...new Set(sportTypes)];
+}
+
+function parseStrengthTargetUnits(value: unknown): Map<string, StrengthTargetUnit> {
+  const text = String(value ?? '').trim();
+  if (text.length === 0) {
+    return new Map();
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw invalidArgument('target-units must be a JSON object, for example {"靠墙静蹲":"time"}.');
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw invalidArgument('target-units must be a JSON object keyed by action name or origin_id.');
+  }
+
+  const entries = Object.entries(parsed as Record<string, unknown>);
+  const invalidEntry = entries.find(([key, unit]) => key.trim().length === 0
+    || (unit !== 'reps' && unit !== 'time'));
+  if (invalidEntry !== undefined) {
+    throw invalidArgument('target-units values must be either "reps" or "time".');
+  }
+  return new Map(entries as Array<[string, StrengthTargetUnit]>);
+}
+
 interface StrengthPrescription {
   name: string;
   sets: number;
-  target: StrengthExerciseInput['target'];
+  target?: StrengthExerciseTarget;
   weightKg: number;
   restSeconds: number;
   restText: string;
 }
 
+interface ResolvedStrengthExercise extends StrengthExerciseInput {
+  displayName: string;
+  restText: string;
+}
+
 function parseExercisePlan(
   value: unknown,
-  defaults: { sets: number; reps: number; weightKg: number; restSeconds: number; restText: string },
+  defaults: { sets: number; weightKg: number; restSeconds: number; restText: string },
 ): StrengthPrescription[] {
   let parsed: unknown;
   try {
@@ -273,21 +352,14 @@ function parseExercisePlan(
       );
     }
 
-    const target = exercise.duration === undefined
-      ? {
-          kind: 'reps' as const,
-          value: exercise.reps === undefined
-            ? defaults.reps
-            : parseWholeNumber(exercise.reps, `exercise-plan item ${index + 1} reps`, 1, 999),
-        }
-      : {
-          kind: 'duration' as const,
-          value: parseClock(
-            exercise.duration,
-            `exercise-plan item ${index + 1} duration`,
-            false,
-          ).seconds,
-        };
+    const target = exercise.duration !== undefined
+      ? parseStrengthDuration(exercise.duration, `exercise-plan item ${index + 1} duration`)
+      : exercise.reps !== undefined
+        ? {
+            kind: 'reps' as const,
+            value: parseWholeNumber(exercise.reps, `exercise-plan item ${index + 1} reps`, 1, 999),
+          }
+        : undefined;
 
     return { name, sets, target, weightKg, restSeconds: rest.seconds, restText: rest.text };
   });
@@ -366,14 +438,27 @@ function normalizeStrengthExercise(
   exercise: StrengthExerciseRecord,
   translations: CorosTranslations,
 ): StrengthExerciseRow {
+  const name = strengthExerciseName(exercise, translations);
+  const catalogTarget = corosStrengthTarget({
+    name,
+    originId: exercise.originId ?? exercise.id,
+    targetType: exercise.targetType,
+    targetValue: exercise.targetValue,
+  });
   return {
-    name: strengthExerciseName(exercise, translations),
+    name,
     origin_id: textOr(exercise.originId ?? exercise.id),
     body_parts: displayList(exercise.partText ?? exercise.part),
     equipment: displayList(exercise.equipmentText ?? exercise.equipment),
     muscles: displayList(
       exercise.muscleText ?? exercise.muscle ?? exercise.muscleRelevance,
     ),
+    target_unit: corosStrengthTargetUnit({
+      name,
+      originId: exercise.originId ?? exercise.id,
+      targetType: exercise.targetType,
+    }),
+    target: formatStrengthTarget(catalogTarget),
   };
 }
 
@@ -394,7 +479,9 @@ function resolveStrengthExercises(
   prescriptions: StrengthPrescription[],
   catalog: StrengthExerciseRecord[],
   translations: CorosTranslations,
-): StrengthExerciseInput[] {
+  defaults: { reps: number; holdDuration: StrengthExerciseTarget },
+  targetUnitOverrides: ReadonlyMap<string, StrengthTargetUnit>,
+): ResolvedStrengthExercise[] {
   const byName = new Map<string, StrengthExerciseRecord>();
   for (const exercise of catalog) {
     const aliases = new Set([
@@ -402,6 +489,7 @@ function resolveStrengthExercises(
       textOr(exercise.name).trim(),
       textOr(exercise.nameText).trim(),
       textOr(exercise.exerciseName).trim(),
+      textOr(exercise.originId ?? exercise.id).trim(),
     ]);
     for (const alias of aliases) {
       if (alias.length > 0) {
@@ -420,14 +508,52 @@ function resolveStrengthExercises(
     );
   }
 
-  return prescriptions.map((prescription) => ({
-    ...prescription,
-    definition: byName.get(prescription.name) as StrengthExerciseRecord,
-    name: textOr(
-      (byName.get(prescription.name) as StrengthExerciseRecord).name,
-      prescription.name,
-    ),
-  }));
+  const matchedOverrideKeys = new Set<string>();
+  const resolved = prescriptions.map((prescription) => {
+    const definition = byName.get(prescription.name) as StrengthExerciseRecord;
+    const originId = textOr(definition.originId ?? definition.id);
+    const overrideKey = [prescription.name, originId]
+      .find((key) => targetUnitOverrides.has(key));
+    if (overrideKey !== undefined) {
+      matchedOverrideKeys.add(overrideKey);
+    }
+    return {
+      ...prescription,
+      definition,
+      displayName: strengthExerciseName(definition, translations),
+      name: textOr(definition.name, prescription.name),
+      target: prescription.target ?? resolveStrengthTarget({
+        name: prescription.name,
+        originId,
+        targetType: definition.targetType,
+        targetValue: definition.targetValue,
+      }, defaults, overrideKey === undefined ? undefined : targetUnitOverrides.get(overrideKey)),
+    };
+  });
+  const unusedOverrides = [...targetUnitOverrides.keys()]
+    .filter((key) => !matchedOverrideKeys.has(key));
+  if (unusedOverrides.length > 0) {
+    throw invalidArgument(
+      `target-units contains action(s) not selected in this plan: ${unusedOverrides.join(', ')}.`,
+    );
+  }
+  return resolved;
+}
+
+function appendDurationRangeNotes(
+  description: unknown,
+  exercises: ResolvedStrengthExercise[],
+): string {
+  const ranges = exercises
+    .filter((exercise) => exercise.target.kind === 'duration'
+      && exercise.target.minSeconds !== exercise.target.maxSeconds)
+    .map((exercise) => `${exercise.displayName} ${formatStrengthTarget(exercise.target)}`);
+  const original = String(description ?? '').trim();
+  if (ranges.length === 0) {
+    return original;
+  }
+  const rangeNote = `建议时间范围：${ranges.join('；')}（COROS 计时目标使用范围上限）。`;
+  return original.length > 0 ? `${original}\n${rangeNote}` : rangeNote;
 }
 
 function asTranslations(value: unknown): CorosTranslations {
@@ -551,6 +677,47 @@ export function createCorosCoach(
   };
 
   return {
+    async getDashboard(raw = false) {
+      const [dashboard, detail] = await Promise.all([
+        request<DashboardEnvelope>('/dashboard/query'),
+        request<DashboardEnvelope>('/dashboard/detail/query'),
+      ]);
+      return normalizeDashboard(dashboard, detail, raw);
+    },
+
+    async listActivities({
+      startDate: rawStartDate,
+      endDate: rawEndDate,
+      sportTypes: rawSportTypes = '',
+      page: rawPage,
+      pageSize: rawPageSize,
+      keywords = '',
+      raw = false,
+    }) {
+      const hasStartDate = String(rawStartDate ?? '').length > 0;
+      const hasEndDate = String(rawEndDate ?? '').length > 0;
+      if (hasStartDate !== hasEndDate) {
+        throw invalidArgument('start-date and end-date must be provided together.');
+      }
+      const startDate = hasStartDate ? parseDate(rawStartDate, 'start-date') : undefined;
+      const endDate = hasEndDate ? parseDate(rawEndDate, 'end-date') : undefined;
+      if (startDate !== undefined && endDate !== undefined && startDate > endDate) {
+        throw invalidArgument('start-date must not be after end-date.');
+      }
+      const page = parseWholeNumber(rawPage, 'page', 1, 10_000);
+      const pageSize = parseWholeNumber(rawPageSize, 'page-size', 1, 100);
+      const sportTypes = parseSportTypes(rawSportTypes);
+      const response = await request<ActivityHistoryResponse>(activityHistoryQuery({
+        startDate,
+        endDate,
+        sportTypes,
+        page,
+        pageSize,
+        keywords: String(keywords ?? '').trim(),
+      }));
+      return normalizeActivityHistory(response, raw);
+    },
+
     async listSchedule({
       startDate: rawStartDate,
       endDate: rawEndDate,
@@ -655,6 +822,8 @@ export function createCorosCoach(
       exercisePlan: rawExercisePlan = '',
       sets: rawSets,
       reps: rawReps,
+      holdDuration: rawHoldDuration = DEFAULT_HOLD_DURATION,
+      targetUnits: rawTargetUnits = '',
       weightKg: rawWeightKg,
       rest: rawRest,
       targetDuration: rawTargetDuration = '',
@@ -665,6 +834,8 @@ export function createCorosCoach(
       const name = requireName(rawName);
       const sets = parseWholeNumber(rawSets, 'sets', 1, 99);
       const reps = parseWholeNumber(rawReps, 'reps', 1, 999);
+      const holdDuration = parseStrengthDuration(rawHoldDuration, 'hold-duration');
+      const targetUnitOverrides = parseStrengthTargetUnits(rawTargetUnits);
       const weightKg = parseWeight(rawWeightKg);
       const rest = parseClock(rawRest, 'rest', true);
       const targetDuration = String(rawTargetDuration ?? '').length > 0
@@ -678,7 +849,6 @@ export function createCorosCoach(
       const prescriptions = hasExercisePlan
         ? parseExercisePlan(rawExercisePlan, {
             sets,
-            reps,
             weightKg,
             restSeconds: rest.seconds,
             restText: rest.text,
@@ -686,7 +856,6 @@ export function createCorosCoach(
         : parseExerciseNames(rawExercises).map((exerciseName) => ({
             name: exerciseName,
             sets,
-            target: { kind: 'reps' as const, value: reps },
             weightKg,
             restSeconds: rest.seconds,
             restText: rest.text,
@@ -711,11 +880,14 @@ export function createCorosCoach(
         prescriptions,
         catalog,
         translations,
+        { reps, holdDuration },
+        targetUnitOverrides,
       );
+      const programDescription = appendDurationRangeNotes(description, resolvedExercises);
       const program = buildStrengthProgram({
         idInPlan: nextIdInPlan(schedule),
         name,
-        description: String(description ?? ''),
+        description: programDescription,
         exercises: resolvedExercises,
       });
       const calculation = await request<RunCalculation>('/training/program/calculate', {
@@ -727,12 +899,10 @@ export function createCorosCoach(
         status: dryRun ? 'calculated, not saved' : 'saved',
         date,
         name,
-        exercises: prescriptions.map(({ name: exerciseName }) => exerciseName).join(', '),
-        prescription: prescriptions.map((exercise) => {
-          const target = exercise.target.kind === 'duration'
-            ? `${secondsToClock(exercise.target.value)}`
-            : `${exercise.target.value} reps`;
-          return `${exercise.name}: ${exercise.sets} sets x ${target} @ ${exercise.weightKg} kg, `
+        exercises: resolvedExercises.map(({ displayName }) => displayName).join(', '),
+        prescription: resolvedExercises.map((exercise) => {
+          const target = formatStrengthTarget(exercise.target);
+          return `${exercise.displayName}: ${exercise.sets} sets x ${target} @ ${exercise.weightKg} kg, `
             + `${exercise.restText} rest`;
         }).join('; '),
         target_duration: targetDuration,

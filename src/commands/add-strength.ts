@@ -19,15 +19,25 @@ cli({
     {
       name: 'exercises',
       default: '',
-      help: 'Comma-separated exact names from strength-exercises; cannot be combined with exercise-plan',
+      help: 'Comma-separated names or origin_ids from strength-exercises; cannot be combined with exercise-plan',
     },
     {
       name: 'exercise-plan',
       default: '',
-      help: 'JSON array with per-action name, sets, reps or duration, weightKg, and rest',
+      help: 'JSON array with per-action name, sets, reps or duration/range, weightKg, and rest',
     },
     { name: 'sets', type: 'int', default: 3, help: 'Default sets for every action' },
-    { name: 'reps', type: 'int', default: 10, help: 'Default repetitions for every action' },
+    { name: 'reps', type: 'int', default: 10, help: 'Default repetitions for dynamic actions' },
+    {
+      name: 'hold-duration',
+      default: '00:00:30-00:00:45',
+      help: 'Default duration or range for actions whose unit resolves to time, HH:MM:SS[-HH:MM:SS]',
+    },
+    {
+      name: 'target-units',
+      default: '',
+      help: 'Optional JSON object overriding units by exact action name or origin_id: reps or time',
+    },
     { name: 'weight-kg', type: 'float', default: 0, help: 'Default weight in kilograms' },
     { name: 'rest', default: '00:01:00', help: 'Rest after each set, HH:MM:SS' },
     {
@@ -62,6 +72,8 @@ cli({
       exercisePlan: kwargs['exercise-plan'],
       sets: kwargs.sets,
       reps: kwargs.reps,
+      holdDuration: kwargs['hold-duration'],
+      targetUnits: kwargs['target-units'],
       weightKg: kwargs['weight-kg'],
       rest: kwargs.rest,
       targetDuration: kwargs['target-duration'],
